@@ -47,7 +47,7 @@ public enum JSONLDAPIError: Error {
     case invalid_version_value(JSON)
     case IRI_confused_with_prefix
     case keyword_redefinition
-    case loading_remote_context_failed
+    case loading_remote_context_failed(Error?)
     case processing_mode_conflict
     case protected_term_redefinition
 }
@@ -57,6 +57,29 @@ public enum JSONLDError: Error {
     case missingValue
     case unimplemented_XXX
     case no_remote_context_support_XXX
+}
+
+private extension URLSession {
+    func synchronousDataTask(with url: URL) -> (Data?, URLResponse?, Error?) {
+        var data: Data?
+        var response: URLResponse?
+        var error: Error?
+
+        let semaphore = DispatchSemaphore(value: 0)
+
+        let dataTask = self.dataTask(with: url) {
+            data = $0
+            response = $1
+            error = $2
+
+            semaphore.signal()
+        }
+        dataTask.resume()
+
+        _ = semaphore.wait(timeout: .distantFuture)
+
+        return (data, response, error)
+    }
 }
 
 private extension String {
@@ -257,6 +280,7 @@ public class JSONLD {
         }
         return true
     }
+    
     func _is_absolute_iri(_ value: String) -> Bool {
         let base = URL(string: "http://base.example.org/")!
         guard let u = URL(string: value, relativeTo: base) else {
@@ -265,6 +289,11 @@ public class JSONLD {
         return (value == u.absoluteString)
     }
     
+    func loadDocument(url: URL, profile: String, requestProfile: Set<String>) -> (Data?, URLResponse?, Error?) {
+        let session = URLSession.shared
+        return session.synchronousDataTask(with: url)
+    }
+
     public func expand(data: JSON, expandContext: JSON? = nil) throws -> JSON {
         var ctx = newContext(base: self.base)
         if let expandContext = expandContext {
@@ -356,19 +385,17 @@ public class JSONLD {
                 if let c = self.parsedRemoteContexts[context_url] {
                     context = c
                 } else {
-                    try self.error(JSONLDError.no_remote_context_support_XXX)
-//                  my $resp    = $self->_load_document($context_url, 'http://www.w3.org/ns/json-ld#context', 'http://www.w3.org/ns/json-ld#context');
-//                  if (not $resp->is_success) {
-//                      println "5.2.5 " . $resp->status_line if $debug;
-//                      die 'loading remote context failed';
-//                  }
-//                  my $content    = $resp->decoded_content;
-//                  $context        = eval { decode_json(encode('UTF-8', $content))->{'@context'} };
-//                  if ($@) {
-//                      println "5.2.5 $@" if $debug;
-//                      die 'loading remote context failed';
-//                  }
-//                  $self->parsed_remote_contexts->{$context_url}    = $context;
+                    let (_data, resp, error) = try self.loadDocument(url: context_url, profile: "http://www.w3.org/ns/json-ld#context", requestProfile: ["http://www.w3.org/ns/json-ld#context"])
+                    if let error = error {
+                        try self.apiError(.loading_remote_context_failed(error))
+                    }
+                    guard let data = _data else {
+                        try self.apiError(.loading_remote_context_failed(nil))
+                    }
+                    guard let j = JSON.decode(data), let context = j["@context"] else {
+                        try self.apiError(.loading_remote_context_failed(nil))
+                    }
+                    self.parsedRemoteContexts[context_url] = context
                 }
 
                 result = try self._4_1_2_ctx_processing(activeCtx: &result, localCtx: context, base: context_url, remoteContexts: remoteContexts)
@@ -397,36 +424,35 @@ public class JSONLD {
                     try self.apiError(.invalid_import_value)
                 }
 
-                let _import = URL(string: valueString, relativeTo: self.base)
-                try self.error(JSONLDError.no_remote_context_support_XXX)
-//              my $resp    = $self->_load_document($import, 'http://www.w3.org/ns/json-ld#context', 'http://www.w3.org/ns/json-ld#context');
-//
-//              if (not $resp->is_success) {
-//                  println "5.6.5" if $debug;
-//                  die 'loading remote context failed';
-//              }
-//
-//              my $content    = $resp->decoded_content;
-//              my $j        = eval { decode_json(encode('UTF-8', $content))->{'@context'} };
-//              if ($@) {
-//                  println "5.6.5 $@" if $debug;
-//                  die 'loading remote context failed';
-//              }
-//
-//              unless (ref($j) eq 'HASH') {
-//                  println "5.6.6" if $debug;
-//                  die 'invalid remote context';
-//              }
-//              my $import_context    = $j;
-//
-//              if (exists $import_context->{'@import'}) {
-//                  println "5.6.7" if $debug;
-//                  die 'invalid context entry';
-//              }
-//
-//              println "5.6.8" if $debug;
+                guard let _import = URL(string: valueString, relativeTo: self.base) else {
+                    try self.apiError(.loading_remote_context_failed(nil))
+                }
+//                try self.error(JSONLDError.no_remote_context_support_XXX)
+
+                
+                let (_data, resp, error) = try self.loadDocument(url: _import, profile: "http://www.w3.org/ns/json-ld#context", requestProfile: ["http://www.w3.org/ns/json-ld#context"])
+                if let error = error {
+                    try self.apiError(.loading_remote_context_failed(error))
+                }
+                guard let data = _data else {
+                    try self.apiError(.loading_remote_context_failed(nil))
+                }
+                guard let j = JSON.decode(data), let import_context = j["@context"] else {
+                    try self.apiError(.loading_remote_context_failed(nil))
+                }
+                
+                if !import_context.is_map {
+                    try self.apiError(.invalid_remote_context)
+                }
+                
+                if import_context.has(key: "@import") {
+                    try self.apiError(.invalid_context_entry)
+                }
+                
+                for (k, v) in import_context.pairs {
+                    context[k] = v
+                }
 //              %$context    = (%$import_context, %$context);
-//              println(Data::Dumper->Dump([$context], ['context'])) if $debug;
             }
             
             if let value = context["@base"], remoteContexts.isEmpty { // 5.7
@@ -499,6 +525,7 @@ public class JSONLD {
         return result
     }
     
+    let gen_delims = Set<Character>("[]:/?#@$")
     func _4_2_2_create_term_definition(activeCtx: inout Context, localCtx: JSON, term: String, defined: [String: Bool], base: URL? = nil, protected: Bool = false, overrideProtected: Bool = false, propagate: Bool = false) throws {
         var defined = defined
         if let d = defined[term] {
@@ -611,6 +638,7 @@ public class JSONLD {
         definition.reverse = false
 
         
+        let termChars = Set(term)
         if let id = value["@id"], (!id.defined || id.stringValue != term) {
             if !id.defined {
                 // 16.1
@@ -641,7 +669,7 @@ public class JSONLD {
                 if let i = term.firstIndex(of: ":"), i != term.startIndex {
                     has_inner_colon = true
                 }
-                if has_inner_colon || term.contains("/") {
+                if has_inner_colon || termChars.contains("/") {
                     // 16.2.4
                     defined[term] = true
                     let iri = try self._5_2_2_iri_expansion(activeCtx: &activeCtx, value: JSON.wrap(term), vocab: true, localCtx: localCtx, defined: defined)
@@ -650,14 +678,13 @@ public class JSONLD {
                     }
                 }
                 
-                let i = definition.iri_mapping ?? ""
-                let gen_delims = Set<Character>("[]:/?#@$")
-                let i_has_gen_delim = !i.filter({ gen_delims.contains($0)}).isEmpty
-                if !term.contains(":") && !term.contains("/") && simpleTerm && i_has_gen_delim {
+                let i = Set(definition.iri_mapping ?? "")
+                let i_has_gen_delim = !i.intersection(gen_delims).isEmpty
+                if !termChars.contains(":") && !termChars.contains("/") && simpleTerm && i_has_gen_delim {
                     definition.prefix_flag = true
                 }
             }
-        } else if term.contains(":") && term.lastIndex(of: ":") != term.startIndex {
+        } else if termChars.contains(":") && term.lastIndex(of: ":") != term.startIndex {
             let pair = term.split(separator: ":", maxSplits: 1)
             let prefix = String(pair[0])
             let suffix = String(pair[1])
@@ -669,7 +696,7 @@ public class JSONLD {
             } else {
                 definition.iri_mapping = term
             }
-        } else if term.contains("/") {
+        } else if termChars.contains("/") {
             let i = try self._5_2_2_iri_expansion(activeCtx: &activeCtx, value: JSON.wrap(term), vocab: true)
             definition.iri_mapping = i.stringValue
             if !self._is_iri(definition.iri_mapping) {
@@ -807,7 +834,7 @@ public class JSONLD {
         }
         
         let skip = Set(["@id", "@reverse", "@container", "@context", "@language", "@nest", "@prefix", "@type", "@direction", "@protected", "@index"])
-        let keys = value.keys.filter { !skip.contains($0) }
+        let keys = Set(value.keys).subtracting(skip)
         if !keys.isEmpty {
             print("invalid keys: \(keys)")
             try self.apiError(.invalid_term_definition)

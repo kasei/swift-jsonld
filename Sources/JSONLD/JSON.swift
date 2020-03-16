@@ -55,9 +55,9 @@ public struct JSON: Equatable {
     
     init(_wrappedValue: Any?) {
         self._wrappedValue = _wrappedValue
-        if let _v = _wrappedValue {
-            JSON.validateValue(_v)
-        }
+//        if let _v = _wrappedValue {
+//            JSON.validateValue(_v)
+//        }
     }
     
     static let null = JSON(_wrappedValue: nil)
@@ -138,8 +138,11 @@ public struct JSON: Equatable {
 
     public subscript(index: String) -> JSON? {
         get {
-            if case .map(let dd) = self.value, let v = dd[index] {
-                return v
+            guard let _v = _wrappedValue else {
+                return nil
+            }
+            if let d = _v as? [String:Any], let value = d[index] {
+                return JSON(_wrappedValue: value)
             }
             return nil
         }
@@ -154,8 +157,11 @@ public struct JSON: Equatable {
 
     public subscript(index: String, default defaultValue: JSON) -> JSON {
         get {
-            if case .map(let dd) = self.value, let v = dd[index] {
-                return v
+            guard let _v = _wrappedValue else {
+                return defaultValue
+            }
+            if let d = _v as? [String:Any], let value = d[index] {
+                return JSON(_wrappedValue: value)
             }
             return defaultValue
         }
@@ -263,15 +269,13 @@ extension JSON { // Helper methods
     }
 
     func has(key: String) -> Bool {
-        switch self.value {
-        case .map(let dd):
-            if let _ = dd[key] {
-                return true
-            }
-            return false
-        default:
+        guard let _v = _wrappedValue else {
             return false
         }
+        if let d = _v as? [String:Any], let _ = d[key] {
+            return true
+        }
+        return false
     }
 
     var is_map: Bool {

@@ -28,7 +28,19 @@ struct JSONLDExpand: ParsableCommand {
         let input = try Data(contentsOf: url)
         do {
             let e = try self.expand(input)
-            print(e.debugDescription)
+            let u = e.unwrap()
+            let options : JSONSerialization.WritingOptions
+            if #available(OSX 10.15, *) {
+                options = [.fragmentsAllowed, .prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
+            } else if #available(OSX 10.13, *) {
+                options = [.fragmentsAllowed, .prettyPrinted, .sortedKeys]
+            } else {
+                options = [.fragmentsAllowed, .prettyPrinted]
+            }
+            
+            let d = try JSONSerialization.data(withJSONObject: u, options: options)
+            let s = String(data: d, encoding: .utf8)!
+            print(s)
         } catch let e {
             print(e)
         }

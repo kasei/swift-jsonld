@@ -265,7 +265,7 @@ extension JSONLD {
                 if activeProp == "@reverse" {
                     try self.apiError(.invalid_reverse_property_map)
                 }
-                if let epKey = expandedProperty.stringValue, let p = result[epKey] {
+                if let epKey = expandedProperty.stringValue, let _ = result[epKey] {
                     if expandedPropertyString != "@included" && expandedPropertyString != "@type" {
                         try self.apiError(.colliding_keywords)
                     }
@@ -498,7 +498,7 @@ extension JSONLD {
                         var v = JSON.wrap([:])
                         v["@value"] = item
                         v["@language"] = JSON.wrap(language)
-                        var wellFormed = true // # TODO: check BCP47 well-formedness of $item
+                        let wellFormed = true // # TODO: check BCP47 well-formedness of $item
                         if item.stringValue != "@none" && !wellFormed {
                             //                  warn "Language tag is not well-formed: $item";
                         }

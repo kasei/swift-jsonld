@@ -1,6 +1,4 @@
 // swift-tools-version:5.1
-// JSONLD fork for aries-framework-swift (cbbathaglini/swift-jsonld)
-// Fixes iOS availability and sets explicit minimum platforms.
 
 import PackageDescription
 
